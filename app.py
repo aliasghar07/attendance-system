@@ -9,12 +9,19 @@ classify status, keep a running log of every entry.
 from flask import Flask, render_template, request, jsonify
 import sqlite3
 import os
+import logging
+import traceback
 from datetime import datetime
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(APP_DIR, "attendance.db")
+# Allow overriding via DATABASE_PATH env var (useful on hosts where the app
+# directory isn't reliably writable). Defaults to a file next to app.py.
+DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(APP_DIR, "attendance.db"))
 
 app = Flask(__name__)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("attendance_app")
 
 
 # ---------------------------------------------------------------------------
@@ -27,22 +34,27 @@ def get_db():
 
 
 def init_db():
-    conn = get_db()
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT NOT NULL DEFAULT 'General',
-            total_classes INTEGER NOT NULL,
-            attended INTEGER NOT NULL,
-            percentage REAL NOT NULL,
-            status TEXT NOT NULL,
-            created_at TEXT NOT NULL
+    try:
+        conn = get_db()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL DEFAULT 'General',
+                total_classes INTEGER NOT NULL,
+                attended INTEGER NOT NULL,
+                percentage REAL NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
         )
-        """
-    )
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+        logger.info("Database ready at %s", DB_PATH)
+    except Exception:
+        logger.error("Failed to initialize database at %s\n%s", DB_PATH, traceback.format_exc())
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +106,12 @@ def classes_can_skip(attended, total, target=75):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+@app.errorhandler(500)
+def handle_server_error(err):
+    logger.error("Unhandled exception on %s %s\n%s", request.method, request.path, traceback.format_exc())
+    return jsonify({"error": "Something went wrong on the server. Please try again."}), 500
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
